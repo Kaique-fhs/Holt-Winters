@@ -1,0 +1,279 @@
+---
+title: "Trabalho 02"
+output:
+  html_document:
+    toc: true
+    toc_depth: 5
+    toc_float: TRUE
+---
+
+<html>
+<body>
+<style>
+
+h1.title {
+  display: none;
+}
+
+div.a {
+	text-align: center;
+}
+
+</style>
+
+<div class="a">
+
+<font color="white"><p> . </p></font>
+
+# Séries Temporais
+#### Igor Kuivjogi / Kaíque Ferreira / Nilo Célio
+#### <b> 2° Trabalho de Séries Temporais <b>
+##### 28 de Julho de 2020
+
+<font color="white"><p> . </p></font>
+
+</div>
+
+
+```{r setup, echo = FALSE, warning = FALSE, message=FALSE}
+# Carregando Bibliotecas
+
+library(tidyverse)
+library(ggpmisc)
+library(knitr)
+library(kableExtra)
+library(lubridate)
+library(zoo)
+library(httr)
+#library(xlsx)
+library(readxl)
+library(fpp2)
+library(tidyr)
+library(ggthemes)
+library(stlplus)
+
+# Pacote para %<>%
+library(magrittr)
+
+# Pacote para gráfico ggplot2
+#library(devtools)
+#install_github("thomasp85/patchwork")
+library(patchwork)
+
+
+# seta o tema default
+theme_set(theme_classic())
+
+```
+
+
+```{r, echo = FALSE, warning = FALSE, message=FALSE}
+
+# Carregando dados PFI
+url = 'https://www.ime.usp.br/~pam/PFI.XLS'
+a = GET(url, write_disk(tf <- tempfile(fileext = ".xls")))
+
+Dados_PFI = as_tibble(read_excel(tf, col_names = F))
+names(Dados_PFI) = c("tempo", "PFI")
+
+# Tira o último ano incompleto
+Dados_PFI %<>%
+  filter(year(tempo) < 2000)
+
+```
+
+## Série PFI
+
+### Caracteristicas da série
+
+<hr/>
+
+Nesse gráfico abaixo conseguimos ver de forma bem mais clara como é a construção das médias móveis em um conjunto de dados referente a produção física industrial nas seguintes variáveis:
+
+- Produção física industrial total mensal
+- Data: Mês de janeiro de 1991 a dezembro de 1999
+- Foi desconsiderado os valores de janeiro de 2000 a julho de 2000
+
+```{r, echo = FALSE, warning = FALSE, message=FALSE}
+ggplot(Dados_PFI, aes(x = tempo, y = PFI)) +
+  geom_path()
+```
+
+### Subsérie PFI
+
+<hr/>
+
+```{r, echo = FALSE, warning = FALSE, message=FALSE}
+
+Dados_PFI %>% 
+  mutate(mes = month(tempo, label = T)) %>% 
+  mutate(ano = year(tempo)) %>% 
+  mutate(texto1 = ifelse(mes == 'jan', ano, '')) %>% 
+  mutate(texto2 = ifelse(mes == 'dez', ano, '')) %>% 
+  ggplot(aes(x = mes, y = PFI, color = as.factor(ano), group = ano)) +
+  geom_line() +
+  geom_point() +
+  geom_text(aes(label = texto1), nudge_x = -0.5) +
+  geom_text(aes(label = texto2), nudge_x = 0.5) +
+  scale_x_discrete(expand = c(0, 1)) +
+  labs(x = 'Mês',  color = 'Ano')
+
+```
+
+
+
+## Decomposição STL
+
+<hr/>
+
+### Parâmetros da decomposição STL
+
+<hr/>
+
+- Np é número de observações que compõem o período
+
+- Ns seria o parâmetro de suavização para o componente sazonal. De acordo com Cleveland et al. 1990, esse valor deve ser ímpar e maior ou igual a 7 e não tem default.
+
+```{r, warning = FALSE, message=FALSE}
+nt = function(Np,Ns) (1.5 * Np)/(1 - 1.5/Ns)
+
+nt(12,13)
+```
+
+```{r, warning = FALSE, message=FALSE}
+Dados_PFI$PFI %>% 
+  ts( start = 1991, end = 1999, frequency = 12) %>% 
+  stlplus( n.p = 12, t.window = 21, s.window = 13 ) %>% 
+  plot_seasonal( col = c("black", "red"), lwd = 2, pch = "*")
+```
+
+
+### Tendência e Sazonalidade
+
+<hr/>
+
+- inner, o número de loop internos que o algoritmo deve executar, normalmente utiliza-se um número baixo, por exemplo, 2. O loop interno é usado para obter estimativas dos componentes de tendência e sazonalidade.
+
+- outer, o número de loop externos que o algoritmo deve executar, ou seja, o número de interações de robustes do loop externo. Ajusta a ponderação para os pontos outlier.
+
+- l.window, a extensão (em defasagens) da janela loess do filtro passa-baixo usado para cada sub-série. Deve ser ímpar e tem default.
+
+- t.window, é o parâmetro de suavização para o componente de tendência; deve ser um valor ímpar e tem default.
+
+- s.window, seria o parâmetro de suavização para o componente sazonal. De acordo com Cleveland et al. 1990, esse valor deve ser ímpar e maior ou igual a 7 e não tem default.
+
+```{r, warning = FALSE, message=FALSE}
+
+Dados_PFI$PFI %>% 
+  ts( start = 1991, end = 1999, frequency = 12) %>%
+  stl(inner = 1, outer = 0, robust = FALSE,
+      l.window = 13, t.window = 21, s.window = 13 ) %>%
+  autoplot()
+```
+
+## Modelo Holt Winters
+
+<hr/>
+
+### Escolha dos parâmetros
+
+<hr/>
+
+```{r, warning = FALSE, message=FALSE}
+# Série sem o ano de 1999
+serie = ts(Dados_PFI$PFI, start = c(1991, 1), end = c(1998, 12), frequency = 12)
+
+# Grid com parâmetros
+grid = expand_grid(
+  alpha    = seq(0.1, 1, 0.1),
+  beta     = seq(0.1, 1, 0.1),
+  gamma    = seq(0.1, 1, 0.1),
+  seasonal = c('additive', 'multiplicative')
+)
+
+# Funcao para Holt Winters
+funcao = function(um, dois, tres, quatro, ...) {
+  modelo = HoltWinters(serie, alpha = um, beta = dois,
+                       gamma = tres, seasonal = quatro)
+  
+  return(modelo)
+}
+
+# loop do modelo em cada combinação de parâmetro
+modelos = list(grid$alpha, grid$beta, grid$gamma, grid$seasonal) %>% 
+            pmap(funcao)
+
+```
+
+
+### Previsão
+
+<hr/>
+
+```{r, warning = FALSE, message=FALSE}
+
+# Previsão da série ajustada
+serie_ajustada = function(modelo) {
+
+  df_ajuste = tibble(
+       tempo = c(Dados_PFI[1:108, ]$tempo, Dados_PFI[13:96, ]$tempo, Dados_PFI[97:108, ]$tempo),
+       dados = c(
+           Dados_PFI$PFI, 
+           c(fitted(modelo)[ ,1]),
+           predict(modelo, 12, prediction.interval=TRUE)[ ,1]
+        ),
+        legenda = c(rep('dados obs', 108),
+                  rep('Holt Winters (ajuste)', 84),
+                  rep('Holt Winters (previsão)', 12))
+  )
+  
+  eqm = mean((df_ajuste[97:108, ]$dados - df_ajuste[193:204, ]$dados) ^ 2)
+
+  return(eqm)
+  
+}
+
+# Lista dos EMQ
+lista_eqms = map_dbl(modelos, ~serie_ajustada(.x))
+
+# Menor EQM
+menor_eqm = which.min(lista_eqms)
+
+# Modelo com os melhorores parâmetros
+best_ht = HoltWinters(serie,
+                       alpha    = grid[menor_eqm, ]$alpha,
+                       beta     = grid[menor_eqm, ]$beta,
+                       gamma    = grid[menor_eqm, ]$gamma,
+                       seasonal = grid[menor_eqm, ]$seasonal)
+
+```
+
+
+### Gŕafico do melhor modelo
+```{r, echo = FALSE, warning = FALSE, message=FALSE}
+
+df_ajuste = tibble(
+       tempo = c(Dados_PFI[1:108, ]$tempo, Dados_PFI[13:96, ]$tempo, Dados_PFI[97:108, ]$tempo),
+       dados = c(
+           Dados_PFI$PFI, 
+           c(fitted(best_ht)[ ,1]),
+           predict(best_ht, 12, prediction.interval=TRUE)[ ,1]
+        ),
+        legenda = c(rep('dados obs', 108),
+                  rep('Holt Winters (ajuste)', 84),
+                  rep('Holt Winters (previsão)', 12))
+  )
+  
+eqm_final = mean((df_ajuste[97:108, ]$dados - df_ajuste[193:204, ]$dados) ^ 2)
+
+ggplot(df_ajuste, aes(x = tempo, y = dados, color = legenda)) +
+  geom_line() +
+  labs(x = 'Tempo', y = 'PFI',
+       title = 'Série ajustada',
+       subtitle = paste0('EQM = ', round(eqm_final, 2)))
+
+```
+
+
+
+
